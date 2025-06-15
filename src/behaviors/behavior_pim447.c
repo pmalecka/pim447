@@ -1,4 +1,4 @@
-/* pim447_behaviors.c */
+/* behavior_pim447.c */
 
 /* SPDX-License-Identifier: MIT */
 

@@ -14,6 +14,7 @@
     "files.associations": {
         "*.embeddedhtml": "html",
         "*.t3s": "typoscript",
-        "pim447.h": "c"
+        "pim447.h": "c",
+        "behavior_pim447.h": "c"
     }
 }
