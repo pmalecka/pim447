@@ -141,7 +141,7 @@ static void pim447_process_movement(struct pimoroni_pim447_data *data, int delta
     if (time_between_interrupts < max_time) {
         // Exponential scaling calculation
         float exponent = -3.0f * (float)time_between_interrupts / max_time; // Adjust -3.0f for desired curve
-        scaling_factor = 2.0f + (max_speed - 2.0f) * expf(exponent);
+        scaling_factor = 1.0f + (max_speed - 1.0f) * expf(exponent);
     }
 
     // Apply scaling based on mode
@@ -320,20 +320,6 @@ static void pimoroni_pim447_gpio_callback(const struct device *port, struct gpio
     k_work_submit(&data->irq_work);
 }
 
-// // TODO: fiddle with this and maybe remove it as it make the tp super choppy
-// static void pimoroni_pim447_timer_handler(struct k_timer *timer){
-//     struct pimoroni_pim447_data *data = CONTAINER_OF(timer, struct pimoroni_pim447_data, report_timer);
-
-//     uint32_t current_time = k_uptime_get();
-
-//     k_mutex_lock(&data->data_lock, K_NO_WAIT);
-//     data->previous_interrupt_time = data->last_interrupt_time;
-//     data->last_interrupt_time = current_time;
-//     k_mutex_unlock(&data->data_lock);
-
-//     k_work_submit(&data->irq_work);
-// }
-
 /* Function to enable or disable interrupt output */
 static int pimoroni_pim447_enable_interrupt(const struct pimoroni_pim447_config *config, bool enable) {
     uint8_t int_reg;
@@ -492,9 +478,6 @@ static int pimoroni_pim447_init(const struct device *dev) {
     }
 
     k_work_init(&data->irq_work, pimoroni_pim447_work_handler);
-
-    // k_timer_init(&data->report_timer, pimoroni_pim447_timer_handler, NULL);
-    // k_timer_start(&data->report_timer, K_MSEC(CONFIG_ZMK_PIMORONI_PIM447_POLLING_INTERVAL_MS), K_MSEC(CONFIG_ZMK_PIMORONI_PIM447_POLLING_INTERVAL_MS));
     
     LOG_INF("PIM447 driver initialized");
 
