@@ -3,6 +3,7 @@
 #define DT_DRV_COMPAT zmk_pimoroni_pim447
 
 #include <zephyr/device.h>
+#include <zephyr/devicetree.h>
 #include <zephyr/input/input.h>
 #include <zephyr/drivers/i2c.h>
 #include <zephyr/drivers/gpio.h>
@@ -16,8 +17,8 @@
 
 LOG_MODULE_REGISTER(zmk_pimoroni_pim447, LOG_LEVEL_DBG);
 
-volatile uint8_t PIM447_MOUSE_MAX_SPEED = 25;
-volatile uint8_t PIM447_MOUSE_MAX_TIME = 5;
+volatile uint8_t PIM447_MOUSE_MAX_SPEED = CONFIG_ZMK_PIMORONI_PIM447_MOUSE_MAX_SPEED;
+volatile uint8_t PIM447_MOUSE_MAX_TIME = CONFIG_ZMK_PIMORONI_PIM447_MOUSE_MAX_TIME;
 volatile float PIM447_MOUSE_SMOOTHING_FACTOR = 1.3f;
 volatile uint8_t PIM447_SCROLL_MAX_SPEED = 1;
 volatile uint8_t PIM447_SCROLL_MAX_TIME = 1;
@@ -34,11 +35,25 @@ static enum pim447_mode current_mode = PIM447_MODE_MOUSE;
 /* Forward declaration of functions */
 static void pimoroni_pim447_gpio_callback(const struct device *port, struct gpio_callback *cb, gpio_port_pins_t pins);
 static int pimoroni_pim447_enable_interrupt(const struct pimoroni_pim447_config *config, bool enable);
-static void activate_automouse_layer();
-static void deactivate_automouse_layer(struct k_timer *timer);
 
 static int previous_x = 0;
 static int previous_y = 0;
+
+#define AUTOMOUSE_LAYER (DT_PROP(DT_DRV_INST(0), automouse_layer))
+
+struct k_timer automouse_layer_timer;
+static bool automouse_triggered = false;
+static void activate_automouse_layer() {
+    automouse_triggered = true;
+    zmk_keymap_layer_activate(AUTOMOUSE_LAYER);
+    k_timer_start(&automouse_layer_timer, K_MSEC(CONFIG_ZMK_PIMORONI_PIM447_AUTOMOUSE_TIMEOUT_MS), K_NO_WAIT);
+}
+
+static void deactivate_automouse_layer(struct k_timer *timer) {
+    automouse_triggered = false;
+    zmk_keymap_layer_deactivate(AUTOMOUSE_LAYER);
+}
+K_TIMER_DEFINE(automouse_layer_timer, deactivate_automouse_layer, NULL);
 
 void pim447_enable_sleep(const struct device *dev) {
     struct pimoroni_pim447_data *data = dev->data;
@@ -62,7 +77,7 @@ void pim447_enable_sleep(const struct device *dev) {
 
     pimoroni_pim447_set_leds(dev, 0, 0, 0, 0); // Turn off LEDs
 
-    LOG_DBG("PIM447 sleep enabled"); 
+    LOG_DBG("PIM447 sleep enabled");
 }
 
 void pim447_disable_sleep(const struct device *dev) {
@@ -126,7 +141,7 @@ static void pim447_process_movement(struct pimoroni_pim447_data *data, int delta
     if (time_between_interrupts < max_time) {
         // Exponential scaling calculation
         float exponent = -3.0f * (float)time_between_interrupts / max_time; // Adjust -3.0f for desired curve
-        scaling_factor = 1.0f + (max_speed - 1.0f) * expf(exponent); 
+        scaling_factor = 2.0f + (max_speed - 2.0f) * expf(exponent);
     }
 
     // Apply scaling based on mode
@@ -257,34 +272,36 @@ static void pimoroni_pim447_work_handler(struct k_work *work) {
         i2c_reg_write_byte_dt(&config->i2c, REG_INT, int_status);
     }
 
-        float speed = 0.0f;
+    float speed = 0.0f;
 
-        if (delta_x > 0 ||  delta_y > 0) {
-            // Calculate movement speed
-            speed = sqrtf((float)(delta_x * delta_x + delta_y * delta_y));
-        }
+    if (delta_x > 0 ||  delta_y > 0) {
+        // Calculate movement speed
+        speed = sqrtf((float)(delta_x * delta_x + delta_y * delta_y));
+    }
 
     // Update LEDs based on movement
     if (speed > 0) {
-         activate_automouse_layer();
+        if (AUTOMOUSE_LAYER > 0) {
+            activate_automouse_layer();
+        }
 
-            // Update hue or brightness based on speed
-            data->hue += speed * PIM447_HUE_INCREMENT_FACTOR;
-            if (data->hue >= 360.0f) {
-                data->hue -= 360.0f;
-            }
+        // Update hue or brightness based on speed
+        data->hue += speed * PIM447_HUE_INCREMENT_FACTOR;
+        if (data->hue >= 360.0f) {
+            data->hue -= 360.0f;
+        }
 
-         // Convert HSV to RGBW
-         uint8_t r, g, b, w;
-         hsv_to_rgbw(data->hue, 1.0f, 1.0f, &r, &g, &b, &w);
+        // Convert HSV to RGBW
+        uint8_t r, g, b, w;
+        hsv_to_rgbw(data->hue, 1.0f, 1.0f, &r, &g, &b, &w);
 
         int err;
 
-         // Set the LEDs
-         err = pimoroni_pim447_set_leds(dev, r, g, b, w);
-         if (err) {
-             LOG_ERR("Failed to set LEDs: %d", err);
-         }
+        // Set the LEDs
+        err = pimoroni_pim447_set_leds(dev, r, g, b, w);
+        if (err) {
+            LOG_ERR("Failed to set LEDs: %d", err);
+        }
     }
 }
 
@@ -300,6 +317,19 @@ static void pimoroni_pim447_gpio_callback(const struct device *port, struct gpio
     k_mutex_unlock(&data->data_lock);
 
     /* Schedule the work item to handle the interrupt in thread context */
+    k_work_submit(&data->irq_work);
+}
+
+static void pimoroni_pim447_timer_handler(struct k_timer *timer){
+    struct pimoroni_pim447_data *data = CONTAINER_OF(timer, struct pimoroni_pim447_data, report_timer);
+
+    uint32_t current_time = k_uptime_get();
+
+    k_mutex_lock(&data->data_lock, K_NO_WAIT);
+    data->previous_interrupt_time = data->last_interrupt_time;
+    data->last_interrupt_time = current_time;
+    k_mutex_unlock(&data->data_lock);
+
     k_work_submit(&data->irq_work);
 }
 
@@ -446,11 +476,11 @@ static int pimoroni_pim447_init(const struct device *dev) {
 
     ret = i2c_reg_read_byte_dt(&config->i2c, REG_CHIP_ID_H, &chip_id_h);
     if (ret) {
-            LOG_ERR("Failed to read chip ID high byte");
-            return ret;
-        }
+        LOG_ERR("Failed to read chip ID high byte");
+        return ret;
+    }
 
-        uint16_t chip_id = ((uint16_t)chip_id_h << 8) | chip_id_l;
+    uint16_t chip_id = ((uint16_t)chip_id_h << 8) | chip_id_l;
     LOG_INF("PIM447 chip ID: 0x%04X", chip_id);
 
     /* Enable the Trackball */
@@ -461,30 +491,14 @@ static int pimoroni_pim447_init(const struct device *dev) {
     }
 
     k_work_init(&data->irq_work, pimoroni_pim447_work_handler);
+
+    k_timer_init(&data->report_timer, pimoroni_pim447_timer_handler, NULL);
+    k_timer_start(&data->report_timer, K_MSEC(CONFIG_ZMK_PIMORONI_PIM447_POLLING_INTERVAL_MS), K_MSEC(CONFIG_ZMK_PIMORONI_PIM447_POLLING_INTERVAL_MS));
     
     LOG_INF("PIM447 driver initialized");
 
     return 0;
 }
-
-#define AUTOMOUSE_LAYER (DT_PROP(DT_DRV_INST(0), automouse_layer))
-#if AUTOMOUSE_LAYER > 0
-    struct k_timer automouse_layer_timer;
-    static bool automouse_triggered = false;
-
-    static void activate_automouse_layer() {
-        automouse_triggered = true;
-        zmk_keymap_layer_activate(AUTOMOUSE_LAYER);
-        k_timer_start(&automouse_layer_timer, K_MSEC(CONFIG_ZMK_PIMORONI_PIM447_AUTOMOUSE_TIMEOUT_MS), K_NO_WAIT);
-    }
-
-    static void deactivate_automouse_layer(struct k_timer *timer) {
-        automouse_triggered = false;
-        zmk_keymap_layer_deactivate(AUTOMOUSE_LAYER);
-    }
-
-    K_TIMER_DEFINE(automouse_layer_timer, deactivate_automouse_layer, NULL);
-#endif
 
 static const struct pimoroni_pim447_config pimoroni_pim447_config = {
     .i2c = I2C_DT_SPEC_INST_GET(0),

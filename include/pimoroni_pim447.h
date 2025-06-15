@@ -52,6 +52,7 @@ struct pimoroni_pim447_data {
     struct k_work irq_work;     // Work item for handling interrupts
     struct k_mutex data_lock;   /* Existing mutex for data synchronization */
     struct k_mutex i2c_lock;    /* New mutex for I2C operations */
+    struct k_timer report_timer;
     float hue;
     bool sw_pressed;
     bool sw_pressed_prev;
@@ -59,7 +60,7 @@ struct pimoroni_pim447_data {
     atomic_t y_buffer;
     uint32_t last_interrupt_time;
     uint32_t previous_interrupt_time;
-    int previous_x; 
+    int previous_x;
     int previous_y;
     int smoothed_x;
     int smoothed_y;
@@ -68,6 +69,5 @@ struct pimoroni_pim447_data {
 void pim447_enable_sleep(const struct device *dev);
 void pim447_disable_sleep(const struct device *dev);
 void pim447_toggle_mode(void);
-
 
 #endif /* PIMORONI_PIM447_H */

@@ -14,6 +14,18 @@ if ZMK_PIMORONI_PIM447
     int "Amount of milliseconds the mouse layer will be active after using the trackball"
     default 400
 
+  config ZMK_PIMORONI_PIM447_POLLING_INTERVAL_MS
+    int "Amount of miliiseconds the mouse polling interval"
+    default 120
+
+  config ZMK_PIMORONI_PIM447_MOUSE_MAX_SPEED
+    int "Amount of scaling speed"
+    default 50
+  
+  config ZMK_PIMORONI_PIM447_MOUSE_MAX_TIME
+    int "Amount of milliseconds the mouse max time"
+    default 25
+
   config ZMK_PIM447_BEHAVIORS
     bool "Enable Pimoroni PIM447 Trackball Actions behavior"
     depends on ZMK_PIMORONI_PIM447
